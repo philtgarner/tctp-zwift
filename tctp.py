@@ -56,6 +56,9 @@ def get_interval_duration(csv_row, interval_count):
     # Get the total duration of all sets
     total_duration = int(csv_row[f'Sets {interval_count}']) * (reps_duration + int(csv_row[f'RBS {interval_count}']))
 
+    # Remove the last RBS (no need to rest after the last set)
+    total_duration = total_duration - int(csv_row[f'RBS {interval_count}'])
+
     # If there is a rest after the sets then add this
     if f'RAS {interval_count}' in csv_row and not csv_row[f'RAS {interval_count}'].strip() == '':
         total_duration = total_duration + int(csv_row[f'RAS {interval_count}'])
@@ -170,7 +173,8 @@ def generate_workout(csv_row, prefix:str, cts_power, zwift_ftp, midpoint):
                 off.set('Power', str(off_pace))
 
             # If there is a rest between sets (there usually will be if there is more than one set) then add it
-            if rbs_duration > 0:
+            # Only add the RBS if we're not on the last interval
+            if rbs_duration > 0 and set != sets - 1:
                 rbs = ET.SubElement(workout, 'SteadyState')
                 rbs.set('Duration', str(rbs_duration))
                 rbs.set('Power', str(off_pace))
