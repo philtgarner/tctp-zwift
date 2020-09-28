@@ -2,6 +2,7 @@ import argparse
 import csv
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
+import re
 
 
 
@@ -68,6 +69,71 @@ def get_interval_duration(csv_row, interval_count):
 
 def get_zwift_duration(csv_duration):
     return int(csv_duration * 60)
+
+
+def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_minutes):
+
+    # Get the on pace (assuming the effort is a straight up zone)
+    on_pace = get_power_percentage(
+        zones=cts_power_zones,
+        desired_zone=on_zone,
+        zwift_ftp=zwift_ftp,
+        midpoint=midpoint
+    )
+
+    # If we have have found a pace then the interval type maps directly to a zone (e.g. SS)
+    # If not then the we should check the special cases (e.g. SEPI)
+    if on_pace <= 0:
+        # If we haven't found a power zone then try some special cases
+        if on_zone == 'SEPI':
+            on_pace = get_power_percentage(
+                zones=cts_power_zones,
+                desired_zone='PI',
+                zwift_ftp=zwift_ftp,
+                midpoint=0.35
+            )
+        elif on_zone.lower().strip().startswith('ou'):
+            return get_over_under_interval(
+                cts_power_zones=cts_power_zones,
+                on_zone=on_zone,
+                zwift_ftp=zwift_ftp,
+                midpoint=midpoint,
+                duration_minutes=duration_minutes
+            )
+
+    # If the on pace is greater than zero then return the steady state effort
+    if on_pace > 0:
+        on = ET.Element('SteadyState')
+        on.set('Duration', str(duration_minutes))
+        on.set('Power', str(on_pace))
+        return [on]
+
+
+def get_over_under_interval(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_minutes):
+    over_duration = get_zwift_duration(int(re.findall(r"(\d+)o", on_zone.lower())[0]))
+    under_duration = get_zwift_duration(int(re.findall(r"(\d+)u", on_zone.lower())[0]))
+    over_unders = list()
+    over_under_duration = 0
+
+    while over_under_duration < duration_minutes:
+        over_unders.append(get_workout_period(
+                cts_power_zones=cts_power_zones,
+                on_zone='SS',
+                zwift_ftp=zwift_ftp,
+                midpoint=midpoint,
+                duration_minutes=under_duration
+            )[0])
+        over_unders.append(get_workout_period(
+                cts_power_zones=cts_power_zones,
+                on_zone='CR',
+                zwift_ftp=zwift_ftp,
+                midpoint=midpoint,
+                duration_minutes=over_duration
+            )[0])
+
+        over_under_duration = over_under_duration + under_duration + over_duration
+
+    return over_unders
 
 
 def generate_workout(csv_row, prefix:str, cts_power, zwift_ftp, midpoint):
@@ -137,15 +203,16 @@ def generate_workout(csv_row, prefix:str, cts_power, zwift_ftp, midpoint):
     for interval_index in range(1, interval_count + 1):
 
         # Get the pace for the 'on' part of the intervals
+        on_zone = csv_row[f'Intensity {interval_index}'].strip().upper()
         on_pace = get_power_percentage(
             zones=cts_power_zones,
-            desired_zone=csv_row[f'Intensity {interval_index}'],
+            desired_zone=on_zone,
             zwift_ftp=zwift_ftp,
             midpoint=midpoint
         )
 
         # Get the pace for the rest sections (default to 0.5)
-        off_pace = 0.25
+        off_pace = 0.5
 
         # Get the number of reps and sets
         reps = int(csv_row[f'Reps {interval_index}'])
@@ -157,15 +224,24 @@ def generate_workout(csv_row, prefix:str, cts_power, zwift_ftp, midpoint):
         rbs_duration = get_zwift_duration(int(csv_row[f'RBS {interval_index}']))
 
         # Loop through the sets
-        for sets in range(sets):
+        for set in range(sets):
 
             # Loop through the reps in the set
             for rep in range(reps):
 
-                # Add the 'on' section
-                on = ET.SubElement(workout, 'SteadyState')
-                on.set('Duration', str(on_duration))
-                on.set('Power', str(on_pace))
+                # Add the 'on' section(s)
+                on = get_workout_period(
+                    cts_power_zones=cts_power_zones,
+                    on_zone=on_zone,
+                    zwift_ftp=zwift_ftp,
+                    midpoint=midpoint,
+                    duration_minutes=on_duration
+                )
+
+                # In some cases (e.g. over-unders) there will be more than one component to the interval
+                # Add them all
+                for o in on:
+                    workout.append(o)
 
                 # Add the 'off' section
                 off = ET.SubElement(workout, 'SteadyState')
