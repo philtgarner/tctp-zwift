@@ -5,8 +5,18 @@ from xml.dom import minidom
 import re
 
 
+FP_CADENCE = 150
 
 def get_zone(name:str, abbreviation:str, cts:int, min_percentage:int, max_percentage:int):
+    """
+    Produces a TCTP zone with a given name and range
+    :param name: The name of the TCTP zone
+    :param abbreviation: An abbreviation for the training zone
+    :param cts: The CTS test power
+    :param min_percentage: The lower end of the power zone as a percentage of the CTS test
+    :param max_percentage: The upper end of the power zone as a percentage of the CTS test
+    :return: The TCTP zone
+    """
     return {
         'name': name,
         'abbreviation': abbreviation,
@@ -16,6 +26,11 @@ def get_zone(name:str, abbreviation:str, cts:int, min_percentage:int, max_percen
 
 
 def get_power_zones(cts_power:int):
+    """
+    Gets the TCTP power zones as described in the book
+    :param cts_power: The CTS test power
+    :return: The TCTP power zones
+    """
     zones = list()
     zones.append(get_zone('Endurance Miles', 'EM', cts_power, 45, 73))
     zones.append(get_zone('Tempo', 'T', cts_power, 80, 85))
@@ -24,7 +39,17 @@ def get_power_zones(cts_power:int):
     zones.append(get_zone('Power Interval', 'PI', cts_power, 101, 150))
     return zones
 
+
 def get_power_percentage(zones, desired_zone, zwift_ftp, midpoint):
+    """
+    Gets the power as a percentage of the Zwift FTP.
+    This is needed because Zwift workouts are generated using a percentage of FTP rather than raw power
+    :param zones: TCTP power zones
+    :param desired_zone: The abbreviation of the desired zone
+    :param zwift_ftp: FTP according to Zwift
+    :param midpoint: The point between the lower and upper bounds of the power zone to use
+    :return: The specified power zone as a percentage of Zwift FTP
+    """
     zone_list = list(filter(lambda z: z['abbreviation'] == desired_zone, zones))
     if len(zone_list) == 1:
         zone = zone_list[0]
@@ -34,6 +59,12 @@ def get_power_percentage(zones, desired_zone, zwift_ftp, midpoint):
 
 
 def row_has_intervals(csv_row, interval_count):
+    """
+    Checks whether a row has entries for the given interval number
+    :param csv_row: A row from the CSV input file
+    :param interval_count: The interval to check the presence of
+    :return: True if the interval exists, false otherwise
+    """
     if f'Intensity {interval_count}' in csv_row and \
             f'Reps {interval_count}' in csv_row and \
             f'Duration {interval_count}' in csv_row and \
@@ -51,6 +82,12 @@ def row_has_intervals(csv_row, interval_count):
 
 
 def get_interval_duration(csv_row, interval_count):
+    """
+    Gets the total duration of one set of intervals including rest between reps, sets and rest after the sets
+    :param csv_row: A row from the CSV input file
+    :param interval_count: The interval to calculate the duration of
+    :return: The total duration of the interval in minutes
+    """
     # Get the durations of each rep
     reps_duration = int(csv_row[f'Reps {interval_count}']) * (int(csv_row[f'Duration {interval_count}']) + int(csv_row[f'RBI {interval_count}']))
 
@@ -68,11 +105,15 @@ def get_interval_duration(csv_row, interval_count):
 
 
 def get_zwift_duration(csv_duration):
+    """
+    Converts from a duration specified in the CSV input file to one for Zwift
+    :param csv_duration: The duration in minutes
+    :return: The duration for Zwift (in seconds)
+    """
     return int(csv_duration * 60)
 
 
-def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_minutes):
-
+def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_seconds):
     # Get the on pace (assuming the effort is a straight up zone)
     on_pace = get_power_percentage(
         zones=cts_power_zones,
@@ -82,8 +123,14 @@ def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_m
     )
 
     # If we have have found a pace then the interval type maps directly to a zone (e.g. SS)
+    if on_pace > 0:
+        on = ET.Element('SteadyState')
+        on.set('Duration', str(duration_seconds))
+        on.set('Power', str(on_pace))
+        return [on]
+
     # If not then the we should check the special cases (e.g. SEPI)
-    if on_pace <= 0:
+    else:
         # If we haven't found a power zone then try some special cases
         if on_zone == 'SEPI':
             on_pace = get_power_percentage(
@@ -92,21 +139,48 @@ def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_m
                 zwift_ftp=zwift_ftp,
                 midpoint=0.35
             )
+            on = ET.Element('SteadyState')
+            on.set('Duration', str(duration_seconds))
+            on.set('Power', str(on_pace))
+            return [on]
+        elif on_zone == 'FP':
+            on_pace = get_power_percentage(
+                zones=cts_power_zones,
+                desired_zone='EM',
+                zwift_ftp=zwift_ftp,
+                midpoint=0.35
+            )
+            on = ET.Element('SteadyState')
+            on.set('Duration', str(duration_seconds))
+            on.set('Power', str(on_pace))
+            on.set('Cadence', str(FP_CADENCE))
+            return [on]
+        elif on_zone == 'PFPI':
+            high_pace = get_power_percentage(
+                zones=cts_power_zones,
+                desired_zone='PI',
+                zwift_ftp=zwift_ftp,
+                midpoint=0.8
+            )
+            low_pace = get_power_percentage(
+                zones=cts_power_zones,
+                desired_zone='PI',
+                zwift_ftp=zwift_ftp,
+                midpoint=0.3
+            )
+            on = ET.Element('Ramp')
+            on.set('Duration', str(duration_seconds))
+            on.set('PowerLow', str(high_pace))
+            on.set('PowerHigh', str(low_pace))
+            return [on]
         elif on_zone.lower().strip().startswith('ou'):
             return get_over_under_interval(
                 cts_power_zones=cts_power_zones,
                 on_zone=on_zone,
                 zwift_ftp=zwift_ftp,
                 midpoint=midpoint,
-                duration_minutes=duration_minutes
+                duration_minutes=duration_seconds
             )
-
-    # If the on pace is greater than zero then return the steady state effort
-    if on_pace > 0:
-        on = ET.Element('SteadyState')
-        on.set('Duration', str(duration_minutes))
-        on.set('Power', str(on_pace))
-        return [on]
 
 
 def get_over_under_interval(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_minutes):
@@ -115,20 +189,22 @@ def get_over_under_interval(cts_power_zones, on_zone, zwift_ftp, midpoint, durat
     over_unders = list()
     over_under_duration = 0
 
+    # Keep adding over and unders until the duration of the intervals is at least as long as we're aiming for
+    # According the TCTP the unders are at steady state and the overs are at climbing repeat pace
     while over_under_duration < duration_minutes:
         over_unders.append(get_workout_period(
                 cts_power_zones=cts_power_zones,
                 on_zone='SS',
                 zwift_ftp=zwift_ftp,
                 midpoint=midpoint,
-                duration_minutes=under_duration
+                duration_seconds=under_duration
             )[0])
         over_unders.append(get_workout_period(
                 cts_power_zones=cts_power_zones,
                 on_zone='CR',
                 zwift_ftp=zwift_ftp,
                 midpoint=midpoint,
-                duration_minutes=over_duration
+                duration_seconds=over_duration
             )[0])
 
         over_under_duration = over_under_duration + under_duration + over_duration
@@ -235,7 +311,7 @@ def generate_workout(csv_row, prefix:str, cts_power, zwift_ftp, midpoint):
                     on_zone=on_zone,
                     zwift_ftp=zwift_ftp,
                     midpoint=midpoint,
-                    duration_minutes=on_duration
+                    duration_seconds=on_duration
                 )
 
                 # In some cases (e.g. over-unders) there will be more than one component to the interval
