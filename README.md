@@ -1,6 +1,6 @@
 # TCTP to Zwift
 
-The _Time Crunched Cyclist_ by Chris Carmichael and Jim Rutberg contains a number of training plans and Zwift is one of the most popular indoor training platforms.
+The _[Time Crunched Cyclist](https://www.velopress.com/books/the-time-crunched-cyclist/)_ by Chris Carmichael and Jim Rutberg contains a number of training plans and Zwift is one of the most popular indoor training platforms.
 This Python script transforms TCTP training plans into Zwift workouts so you don't have to manually create each one.
 
 ## TCTP training plan format
@@ -47,3 +47,22 @@ All of the above terms are explained in the TCTP book with the exception of RAS 
 - OU (2U, 1O)
 - FP
 - PFPI
+
+## Zwift FTP
+
+Zwift workouts are defined as a proportion of your FTP (rather than absolute power) so the script needs to know your FTP according to Zwift.
+
+## Use
+
+Run the script with the following command line arguments:
+
+````
+--cts_power
+270
+--zwift_ftp
+234
+--csv
+7.2.csv
+--workout_prefix
+"TCTP 7.2 Century"
+````
