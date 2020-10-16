@@ -3,6 +3,7 @@ import csv
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 import re
+import os
 
 
 FP_CADENCE = 150
@@ -114,6 +115,16 @@ def get_zwift_duration(csv_duration):
 
 
 def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_seconds):
+    """
+    Gets an array of XML elements that represent an interval.
+    This is often a single steady state effort but there are exceptions like over-unders and PFPI
+    :param cts_power_zones: The CTS power zones
+    :param on_zone: The name of the TCTP zone that represents this interval
+    :param zwift_ftp: FTP according to Zwift
+    :param midpoint: The midpoint in a workout range. For example if the EM zone is from 120-200 Watts and the midpoint is 0.5 then the power used for EM is 160 Watts.
+    :param duration_seconds: The duration of this interval in seconds
+    :return: An array of XML elements that represent this workout
+    """
     # Get the on pace (assuming the effort is a straight up zone)
     on_pace = get_power_percentage(
         zones=cts_power_zones,
@@ -181,9 +192,20 @@ def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_s
                 midpoint=midpoint,
                 duration_minutes=duration_seconds
             )
+        else:
+            return None
 
 
 def get_over_under_interval(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_minutes):
+    """
+    Gets an array of steady state intervals that represent over-unders
+    :param cts_power_zones: The CTS power zones
+    :param on_zone: The textual representation of over-unders (e.g. OU (2U,1O))
+    :param zwift_ftp: FTP according to Zwift
+    :param midpoint: The midpoint in a workout range. For example if the EM zone is from 120-200 Watts and the midpoint is 0.5 then the power used for EM is 160 Watts.
+    :param duration_minutes: The duration of the entire over-under session (i.e. not an individual over or under)
+    :return: An array of XML elements that represent this over-under
+    """
     over_duration = get_zwift_duration(int(re.findall(r"(\d+)o", on_zone.lower())[0]))
     under_duration = get_zwift_duration(int(re.findall(r"(\d+)u", on_zone.lower())[0]))
     over_unders = list()
@@ -212,10 +234,17 @@ def get_over_under_interval(cts_power_zones, on_zone, zwift_ftp, midpoint, durat
     return over_unders
 
 
-def generate_workout(csv_row, prefix:str, cts_power, zwift_ftp, midpoint):
-    # Get the CTS power zones
-    cts_power_zones = get_power_zones(cts_power)
-
+def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, directory):
+    """
+    Generates a ZWO file that represent the training plan described in the CSV row
+    :param csv_row: The CSV row representing the workout
+    :param prefix: A prefix to add to the week/day workout name
+    :param cts_power_zones: The CTS power zones
+    :param zwift_ftp: FTP according to Zwift
+    :param midpoint: The midpoint in a workout range. For example if the EM zone is from 120-200 Watts and the midpoint is 0.5 then the power used for EM is 160 Watts.
+    :param directory: The directory to put the workout files in
+    :return: True if the workout was created, false otherwise
+    """
     # Get the title of the workout
     space = '' if len(prefix) == 0 else ' '
     week = csv_row['Week']
@@ -353,9 +382,13 @@ def generate_workout(csv_row, prefix:str, cts_power, zwift_ftp, midpoint):
         cool_down.set('PowerHigh', '0.25')
         cool_down.set('PowerLow', '0.75')
 
+    # If the directory for the output files doesn't exist then make it.
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
     # Write XML file
     xml_string = minidom.parseString(ET.tostring(workout_file)).toprettyxml(indent="   ")
-    with open(f'{workout_name}.zwo', "w") as f:
+    with open(f'{directory}/{workout_name}.zwo', "w") as f:
         f.write(xml_string)
 
     return True
@@ -368,9 +401,22 @@ if __name__ == '__main__':
     parser.add_argument('--zwift_ftp', type=int, help='FTP as set in Zwift')
     parser.add_argument('--workout_prefix', help='Prefix to give workouts', default='')
     parser.add_argument('--midpoint', type=float, help='The point between the min and max where an interval is set', default=0.5)
+    parser.add_argument('--directory', help='The directory to put the output files in', default='output')
     args = parser.parse_args()
 
     with open(args.csv, 'r') as read_obj:
         csv_reader = csv.DictReader(read_obj)
+
+        # Get the CTS power zones
+        cts_power_zones = get_power_zones(args.cts_power)
+
+        # Loop over each row in the CSV and create a workout for each row
         for row in csv_reader:
-            generate_workout(row, args.workout_prefix, args.cts_power, args.zwift_ftp, args.midpoint)
+            generate_workout(
+                csv_row=row,
+                prefix=args.workout_prefix,
+                cts_power_zones=cts_power_zones,
+                zwift_ftp=args.zwift_ftp,
+                midpoint=args.midpoint,
+                directory=args.directory
+            )
