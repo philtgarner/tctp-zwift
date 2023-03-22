@@ -482,6 +482,9 @@ if __name__ == '__main__':
     with open(args.csv, 'r') as read_obj:
         csv_reader = csv.DictReader(read_obj)
 
+        # Create the calendar to store all the event details
+        cal = Calendar()
+
         # Get the CTS power zones
         cts_power_zones = get_power_zones(args.cts_power)
 
@@ -509,3 +512,12 @@ if __name__ == '__main__':
                 start_date=start_date,
                 workout_time=workout_time
             )
+
+            # Add the workout calendar events to the calendar
+            for workout_calendar_event in workout_calendar_events:
+                cal.events.add(workout_calendar_event)
+
+        # If we have a start date (and therefore want to create a calendar) then write it to a file
+        if start_date is not None:
+            with open('my.ics', 'w', newline='\n') as my_file:
+                my_file.writelines(cal.serialize_iter())
