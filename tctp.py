@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 from xml.dom import minidom
 import re
 import os
+import time
 
 
 FP_CADENCE = 150
@@ -111,7 +112,18 @@ def get_zwift_duration(csv_duration):
     :param csv_duration: The duration in minutes
     :return: The duration for Zwift (in seconds)
     """
-    return int(csv_duration * 60)
+    return int(csv_duration) * 60
+
+
+def get_textual_duration(seconds):
+    """
+    Gets a textual representation of the time in the format HH:MM:SS or MM:SS if less than one hour
+    :param seconds: The duration in seconds
+    :return: Textual representation of the duration
+    """
+    if seconds < 3600:
+        return time.strftime('%M:%S', time.gmtime(seconds))
+    return time.strftime('%H:%M:%S', time.gmtime(seconds))
 
 
 def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_seconds):
@@ -138,7 +150,12 @@ def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_s
         on = ET.Element('SteadyState')
         on.set('Duration', str(duration_seconds))
         on.set('Power', str(on_pace))
-        return [on]
+        return [
+            {
+                'xml': on,
+                'description': f"{get_textual_duration(duration_seconds)} @ {int(on_pace*zwift_ftp)} Watts"
+            }
+        ]
 
     # If not then the we should check the special cases (e.g. SEPI)
     else:
@@ -153,7 +170,12 @@ def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_s
             on = ET.Element('SteadyState')
             on.set('Duration', str(duration_seconds))
             on.set('Power', str(on_pace))
-            return [on]
+            return [
+                {
+                    'xml': on,
+                    'description': f"{get_textual_duration(duration_seconds)} @ {int(on_pace*zwift_ftp)} Watts"
+                }
+            ]
         elif on_zone == 'FP':
             on_pace = get_power_percentage(
                 zones=cts_power_zones,
@@ -165,7 +187,12 @@ def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_s
             on.set('Duration', str(duration_seconds))
             on.set('Power', str(on_pace))
             on.set('Cadence', str(FP_CADENCE))
-            return [on]
+            return [
+                {
+                    'xml': on,
+                    'description': f"{get_textual_duration(duration_seconds)} @ {int(on_pace*zwift_ftp)} Watts @ {FP_CADENCE} RPM"
+                }
+            ]
         elif on_zone == 'PFPI':
             high_pace = get_power_percentage(
                 zones=cts_power_zones,
@@ -183,7 +210,12 @@ def get_workout_period(cts_power_zones, on_zone, zwift_ftp, midpoint, duration_s
             on.set('Duration', str(duration_seconds))
             on.set('PowerLow', str(high_pace))
             on.set('PowerHigh', str(low_pace))
-            return [on]
+            return [
+                {
+                    'xml': on,
+                    'description': f"{get_textual_duration(duration_seconds)} @ {(high_pace*zwift_ftp)}, fading to {(low_pace*zwift_ftp)} Watts"
+                }
+            ]
         elif on_zone.lower().strip().startswith('ou'):
             return get_over_under_interval(
                 cts_power_zones=cts_power_zones,
@@ -250,6 +282,7 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
     week = csv_row['Week']
     day = csv_row['Day']
     workout_name = f'{prefix}{space}Week {week} {day}'
+    workout_description = []
 
     # Find the total duration of all intervals in this workout
     # We'll use this to work out how much of the base intensity we need to put between each interval set
@@ -297,12 +330,14 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
         warm_up.set('Duration', str(get_zwift_duration(warm_up_duration)))
         warm_up.set('PowerLow', '0.25')
         warm_up.set('PowerHigh', '0.75')
+        workout_description.append(f"{get_textual_duration(get_zwift_duration(warm_up_duration))} warm-up")
 
     # If we need any filler before we get into the intervals add it here
     if filler_duration > 0:
         filler = ET.SubElement(workout, 'SteadyState')
         filler.set('Duration', str(filler_duration))
         filler.set('Power', str(base_pace))
+        workout_description.append(f"{get_textual_duration(filler_duration)} @ {int(base_pace*zwift_ftp)} Watts")
 
     # Loop through the interval sets and append them to the the XML
     for interval_index in range(1, interval_count + 1):
@@ -346,12 +381,15 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
                 # In some cases (e.g. over-unders) there will be more than one component to the interval
                 # Add them all
                 for o in on:
-                    workout.append(o)
+                    workout.append(o['xml'])
+                    workout_description.append(o['description'])
 
                 # Add the 'off' section
                 off = ET.SubElement(workout, 'SteadyState')
                 off.set('Duration', str(off_duration))
                 off.set('Power', str(off_pace))
+                workout_description.append(f"{get_textual_duration(off_duration)} @ {int(off_pace*zwift_ftp)} Watts")
+
 
             # If there is a rest between sets (there usually will be if there is more than one set) then add it
             # Only add the RBS if we're not on the last interval
@@ -359,6 +397,7 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
                 rbs = ET.SubElement(workout, 'SteadyState')
                 rbs.set('Duration', str(rbs_duration))
                 rbs.set('Power', str(off_pace))
+                workout_description.append(f"{get_textual_duration(rbs_duration)} @ {int(off_pace*zwift_ftp)} Watts")
 
         # If the workout consists of multiple sets of intervals then there is usually a rest period between them.
         # Add it if it exists
@@ -368,12 +407,14 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
                 rbs = ET.SubElement(workout, 'SteadyState')
                 rbs.set('Duration', str(ras_duration))
                 rbs.set('Power', str(off_pace))
+                workout_description.append(f"{get_textual_duration(ras_duration)} @ {int(off_pace*zwift_ftp)} Watts")
 
         # After each interval sets we add any filler to make sure the total duration of the workout is correct
         if filler_duration > 0:
             filler = ET.SubElement(workout, 'SteadyState')
             filler.set('Duration', str(filler_duration))
             filler.set('Power', str(base_pace))
+            workout_description.append(f"{get_textual_duration(filler_duration)} @ {int(base_pace*zwift_ftp)} Watts")
 
     # Add the cool down
     if cool_down_duration > 0:
@@ -381,6 +422,7 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
         cool_down.set('Duration', str(get_zwift_duration(cool_down_duration)))
         cool_down.set('PowerHigh', '0.25')
         cool_down.set('PowerLow', '0.75')
+        workout_description.append(f"{get_textual_duration(get_zwift_duration(cool_down_duration))} cool-down")
 
     # If the directory for the output files doesn't exist then make it.
     if not os.path.exists(directory):
