@@ -5,6 +5,9 @@ from xml.dom import minidom
 import re
 import os
 import time
+from ics import Calendar, Event
+from datetime import timedelta, datetime
+import calendar
 
 
 FP_CADENCE = 150
@@ -266,7 +269,7 @@ def get_over_under_interval(cts_power_zones, on_zone, zwift_ftp, midpoint, durat
     return over_unders
 
 
-def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, directory):
+def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, directory, start_date, workout_time):
     """
     Generates a ZWO file that represent the training plan described in the CSV row
     :param csv_row: The CSV row representing the workout
@@ -275,6 +278,8 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
     :param zwift_ftp: FTP according to Zwift
     :param midpoint: The midpoint in a workout range. For example if the EM zone is from 120-200 Watts and the midpoint is 0.5 then the power used for EM is 160 Watts.
     :param directory: The directory to put the workout files in
+    :param start_date: The date of the first activity
+    :param workout_time: The time of day workouts happen at
     :return: True if the workout was created, false otherwise
     """
     # Get the title of the workout
@@ -433,7 +438,22 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
     with open(f'{directory}/{workout_name}.zwo', "w") as f:
         f.write(xml_string)
 
-    return True
+    calendar_events = []
+    if start_date is not None:
+        # TODO work out the start time
+        if '-' in csv_row['Week']:
+            week_numbers = csv_row['Week'].split('-')
+        else:
+            workout_date = start_date + timedelta(weeks=(int(csv_row['Week'])-1), days=time.strptime(csv_row['Day'], "%A").tm_wday)
+            # Create the calendar event
+            calendar_event = Event()
+            calendar_event.begin = datetime.combine(workout_date, workout_time).strftime('%Y-%m-%d %H:%M:%S')
+            calendar_event.name = workout_name
+            calendar_event.description = '\n'.join(workout_description)
+            calendar_event.duration = timedelta(minutes=total_duration)
+            calendar_events.append(calendar_event)
+
+    return calendar_events
 
 
 if __name__ == '__main__':
@@ -444,7 +464,20 @@ if __name__ == '__main__':
     parser.add_argument('--workout_prefix', help='Prefix to give workouts', default='')
     parser.add_argument('--midpoint', type=float, help='The point between the min and max where an interval is set', default=0.5)
     parser.add_argument('--directory', help='The directory to put the output files in', default='output')
+    parser.add_argument('--start_date', help='The date for your first activity')
+    parser.add_argument('--workout_time', help='The date for your workouts')
+
     args = parser.parse_args()
+
+    # Parse the start date of the first activity
+    start_date = None
+    if args.start_date is not None:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
+
+    # Parse the start time to use for the workouts
+    workout_time = datetime.strptime('05:00', "%H:%M").time()
+    if args.workout_time is not None:
+        workout_time = datetime.strptime(args.start_date, "%H:%M").time()
 
     with open(args.csv, 'r') as read_obj:
         csv_reader = csv.DictReader(read_obj)
@@ -452,13 +485,27 @@ if __name__ == '__main__':
         # Get the CTS power zones
         cts_power_zones = get_power_zones(args.cts_power)
 
+        # Check whether we need to confirm the start date (if it isn't set then we don't need to bother with this, we won't generate a calendar)
+        confirmed_start_date = start_date is None
+
         # Loop over each row in the CSV and create a workout for each row
         for row in csv_reader:
-            generate_workout(
+
+            # If we need to confirm the start date then check whether the start date matches the day of the week for the first entry
+            if not confirmed_start_date:
+                if calendar.day_name[start_date.weekday()] == row['Day']:
+                    confirmed_start_date = True
+                else:
+                    print(f"The start date does not match your first activity. Your first activity is on a {row['Day']} and your start date is a {calendar.day_name[start_date.weekday()]}.")
+                    exit(1)
+
+            workout_calendar_events = generate_workout(
                 csv_row=row,
                 prefix=args.workout_prefix,
                 cts_power_zones=cts_power_zones,
                 zwift_ftp=args.zwift_ftp,
                 midpoint=args.midpoint,
-                directory=args.directory
+                directory=args.directory,
+                start_date=start_date,
+                workout_time=workout_time
             )
