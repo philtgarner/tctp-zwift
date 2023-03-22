@@ -137,3 +137,6 @@ config.prod.yml
 
 # Zwift workout files
 *.zwo
+
+# Calendar files
+*.ics
