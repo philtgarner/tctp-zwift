@@ -443,6 +443,18 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
         # TODO work out the start time
         if '-' in csv_row['Week']:
             week_numbers = csv_row['Week'].split('-')
+            if len(week_numbers) == 2 and week_numbers[0].isnumeric() and week_numbers[1].isnumeric():
+                for w in range(int(week_numbers[0]), int(week_numbers[1]) + 1):
+                    workout_date = start_date + timedelta(weeks=(w - 1), days=time.strptime(csv_row['Day'], "%A").tm_wday)
+
+                    # Create the calendar event
+                    calendar_event = Event()
+                    calendar_event.begin = datetime.combine(workout_date, workout_time).strftime('%Y-%m-%d %H:%M:%S')
+                    calendar_event.name = workout_name
+                    calendar_event.description = '\n'.join(workout_description)
+                    calendar_event.duration = timedelta(minutes=total_duration)
+                    calendar_events.append(calendar_event)
+
         else:
             workout_date = start_date + timedelta(weeks=(int(csv_row['Week'])-1), days=time.strptime(csv_row['Day'], "%A").tm_wday)
             # Create the calendar event
