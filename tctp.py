@@ -537,5 +537,5 @@ if __name__ == '__main__':
 
         # If we have a start date (and therefore want to create a calendar) then write it to a file
         if start_date is not None:
-            with open('my.ics', 'w', newline='\n') as my_file:
+            with open('tctp.ics', 'w', newline='\n') as my_file:
                 my_file.writelines(cal.serialize_iter())
