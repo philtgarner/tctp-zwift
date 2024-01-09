@@ -269,7 +269,7 @@ def get_over_under_interval(cts_power_zones, on_zone, zwift_ftp, midpoint, durat
     return over_unders
 
 
-def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, directory, start_date, workout_time):
+def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, directory, start_date, workout_time, day_offset=0):
     """
     Generates a ZWO file that represent the training plan described in the CSV row
     :param csv_row: The CSV row representing the workout
@@ -280,6 +280,7 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
     :param directory: The directory to put the workout files in
     :param start_date: The date of the first activity
     :param workout_time: The time of day workouts happen at
+    :param day_offset: An offset to the day of the week the workout is on. With an offset of 1 workouts intended for Monday would move to Tuesday etc.
     :return: True if the workout was created, false otherwise
     """
     # Get the title of the workout
@@ -440,12 +441,13 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
 
     calendar_events = []
     if start_date is not None:
-        # TODO work out the start time
+        # TODO work out the start time (so the timezone handles daylight saving)
         if '-' in csv_row['Week']:
             week_numbers = csv_row['Week'].split('-')
             if len(week_numbers) == 2 and week_numbers[0].isnumeric() and week_numbers[1].isnumeric():
                 for w in range(int(week_numbers[0]), int(week_numbers[1]) + 1):
                     workout_date = start_date + timedelta(weeks=(w - 1), days=time.strptime(csv_row['Day'], "%A").tm_wday)
+                    workout_date = workout_date + timedelta(days=day_offset)
 
                     # Create the calendar event
                     calendar_event = Event()
@@ -457,6 +459,8 @@ def generate_workout(csv_row, prefix:str, cts_power_zones, zwift_ftp, midpoint, 
 
         else:
             workout_date = start_date + timedelta(weeks=(int(csv_row['Week'])-1), days=time.strptime(csv_row['Day'], "%A").tm_wday)
+            workout_date = workout_date + timedelta(days=day_offset)
+
             # Create the calendar event
             calendar_event = Event()
             calendar_event.begin = datetime.combine(workout_date, workout_time).strftime('%Y-%m-%d %H:%M:%S')
@@ -478,6 +482,7 @@ if __name__ == '__main__':
     parser.add_argument('--directory', help='The directory to put the output files in', default='output')
     parser.add_argument('--start_date', help='The date for your first activity')
     parser.add_argument('--workout_time', help='The date for your workouts')
+    parser.add_argument('--day_offset', type=int, help='The number of days to move workouts forwards. If 1 is provided then Monday workouts would move to Tuesday etc.', default=0)
 
     args = parser.parse_args()
 
@@ -522,7 +527,8 @@ if __name__ == '__main__':
                 midpoint=args.midpoint,
                 directory=args.directory,
                 start_date=start_date,
-                workout_time=workout_time
+                workout_time=workout_time,
+                day_offset=args.day_offset
             )
 
             # Add the workout calendar events to the calendar
